@@ -14,13 +14,14 @@ module Logic
 import MacroTools
 import MacroTools: @capture
 
+
 # Error when a formula has no solutions.
-struct MatchFailure
+struct MatchFailure <: Exception
   value
 end
 
 # Error when a formula has more than one solution.
-struct MatchAmbiguous
+struct MatchAmbiguous <: Exception
   value
 end
 
@@ -55,7 +56,7 @@ end
 #     if x == typemax(T)
 #       return
 #     end
-#     
+#
 #     x += 1
 #   end
 # end
@@ -88,7 +89,7 @@ function has_unknowns(pat, bound)::Bool
   elseif pat == :nothing || pat == :missing
     # nothing
     false
-  elseif @capture(pat, _quote_macrocall) 
+  elseif @capture(pat, _quote_macrocall)
     false
   elseif @capture(pat, Symbol(_))
     false
@@ -207,7 +208,7 @@ function translate_match(pat, value, body, bound::Set{Symbol}, rename::Dict{Symb
         end
       end
     else
-      println("$pat :: bound $bound + $x")
+      # println("$pat :: bound $bound + $x")
       push!(bound, x)
       quote
         let $tmp = $value;
@@ -342,9 +343,9 @@ function translate_match(pat, value, body, bound::Set{Symbol}, rename::Dict{Symb
         -- if there's one, choose it
         -- if there's more than one, MatchAmbiguous
         -- if there's zero, MatchFailure
-        -- 
+        --
 
-    
+
         =#
   elseif @capture(pat, (ps__,))
     # tuple
@@ -387,52 +388,66 @@ function translate_match(pat, value, body, bound::Set{Symbol}, rename::Dict{Symb
   end
 end
 
-
 """
-    @fun name(patterns...)
+    @match value begin
+        pattern1 => result1
+        pattern2 => result2
         ...
     end
 
-    @fun name(patterns...) where guard
-        ...
-    end
-
-Declare a function with pattern parameters.
+Return `result` for the first matching `pattern`.
+If there are no matches, throw `MatchFailure`.
+If there are multiple matches, throw `MatchAmbiguous`.
 """
-macro fun(name, argsbody)
-    if @capture(argsbody, args_ = body_) &&
-       @capture(args, (pats__)) &&
-       @capture(body, begin body_ end)
-        xs = map(p -> gensym(), pats)
-        bound = Set{Symbol}()
-        rename = Dict{Symbol,Symbol}()
-        quote
-            function $(esc(name))(xs...)
-                $(translate_match(:($pats...,), Tuple(xs...), body, bound, rename))
-            end
-        end
-    else
-        error("Unrecognized fun syntax: $name $body")
-    end
-end
+macro match(value, body)
+  println(value)
+  println(body)
+  bound1 = Set{Symbol}()
+  bound2 = Set{Symbol}()
+  rename1 = Dict{Symbol,Symbol}()
+  rename2 = Dict{Symbol,Symbol}()
 
-"""
-    @rel name(patterns...)
-        ...
+  if @capture(body, begin cases__ end)
+    input = gensym("value")
+    output = gensym("result")
+    count = gensym("count")
+
+    accum = []
+    counter = []
+
+    for case in cases
+      if @capture(case, pat_ => exp_)
+        result = translate_match(pat, input, :true, bound1, rename1)
+        push!(counter, result)
+
+        result = translate_match(pat, input, exp, bound2, rename2)
+        push!(accum, result)
+      else
+        @error("bad match case")
+      end
     end
 
-    @rel name(patterns...) where guard
-        ...
-    end
-
-Declare a modal function (relation).
-"""
-macro rel(name, args, body)
     quote
-        function $(esc(name))($args)
-            $body
+      begin
+        $input = $value
+        $output = nothing
+        $count = 0
+        begin
+            $((:($count = $count + (isnothing($s) ? 0 : 1)) for s in counter)...)
         end
+        if $count == 0
+          throw(MatchFailure($input))
+        elseif $count > 1
+          throw(MatchAmbiguous($input))
+        else
+          $((:($output = $s) for s in accum)...)
+        end
+        $output
+      end
     end
+  else
+    @error("bad match statement")
+  end
 end
 
 """
@@ -467,7 +482,7 @@ macro once(formula, body)
   x = translate_match(formula, :true, :(begin; $body; break; end), bound, rename)
   println(x)
   quote
-    for _ in [()] 
+    for _ in [()]
       $x
     end
   end
@@ -495,26 +510,9 @@ macro define(formula)
     =#
 end
 
-"""
-    @match value begin
-        pattern1 => result1
-        pattern2 => result2
-        ...
-    end
-
-Return `result` for the first matching `pattern`.
-If there are no matches, throw `MatchFailure`.
-If there are multiple matches, throw `MatchAmbiguous`.
-"""
-macro match(value, cases)
-    # f = make_function(cases)
-    quote
-      # f($value)
-    end
-end
-
 export MatchFailure, MatchAmbiguous
 export @match
 export @foreach, @once
+export Out
 
 end #module
